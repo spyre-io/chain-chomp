@@ -20,8 +20,13 @@ pnpm install
 pnpm run dev
 ```
 
-## Building
+or `docker`:
 
-Build a docker image with:
+```
+docker build -t chain-chomp .
+docker run chain-chomp
+```
 
-`docker build -t chain-chomp .`
+## API
+
+Documentation in progress... but until then, check out [`/config/routes.js`](./config/routes.js) for all endpoints.
