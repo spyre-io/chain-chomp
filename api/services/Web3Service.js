@@ -133,6 +133,7 @@ const validateStake = async ({ user, amount, fee, expiry, }) => {
 
 const getErrorStringFromViemError = (error) => {
   const reasons = [];
+  const other = [];
   if (error.walk) {
     error.walk((e) => {
       // this handles reasons like "revert: Reason string"
@@ -149,6 +150,8 @@ const getErrorStringFromViemError = (error) => {
 
           return;
         }
+      } else if (e.name === 'AbiFunctionNotFoundError') {
+        reasons.push(e.message);
       }
     });
   } else {
@@ -158,7 +161,7 @@ const getErrorStringFromViemError = (error) => {
   return reasons.join(', ');
 };
 
-const promiseHandler = (logger, { txn, stake1, stake2, signedMsg1, signedMsg2, matchId, winner }) => async (resolve, reject) => {
+const promiseHandler = (logger, { txn, params, fn, }) => async (resolve, reject) => {
   const fail = (message) => {
     queueTxnMutation(
       txn.id,
@@ -185,14 +188,7 @@ const promiseHandler = (logger, { txn, stake1, stake2, signedMsg1, signedMsg2, m
 
   let hash;
   try {
-    hash = await _contracts.hangman.contract.write.processStakedMatch([
-      stake1,
-      stake2,
-      signedMsg1,
-      signedMsg2,
-      matchId,
-      winner,
-    ]);
+    hash = await fn(logger, params);
   } catch (error) {
     fail(getErrorStringFromViemError(error));
     return;
@@ -264,6 +260,49 @@ const promiseHandler = (logger, { txn, stake1, stake2, signedMsg1, signedMsg2, m
   );
 };
 
+const process = async (parentLogger, { params, method, validate, execute, }) => {
+  parentLogger.info(`Processing '${method}': ${JSON.stringify(params, null, 2)}.`);
+
+  const txn = await Txn.create({
+    status: 'not-started',
+    method, params,
+  }).fetch();
+
+  const logger = parentLogger.child({ txnId: txn.id, });
+
+  logger.info(`Submitting txn.`);
+
+  try {
+    await validate(logger, params);
+  } catch (error) {
+    logger.error(`Error validating parameters: ${error.message}.`);
+
+    await Txn
+      .updateOne({ id: txn.id })
+      .set({
+        status: 'failure',
+        error: error.message,
+      });
+    txn.status = 'failure';
+    txn.error = error.message;
+
+    return txn; 
+  }
+  
+  const promise = new Promise(promiseHandler(logger, { txn, params, fn: execute, }));
+  try {
+    await promise;
+  } catch (error) {
+    logger.error(`Error submitting txn: ${error}.`);
+
+    return txn;
+  }
+
+  logger.info(`Successfully sent transaction.`);
+
+  return txn;
+};
+
 module.exports = {
   init: async () => {
     initWeb3(Logger.default);
@@ -309,51 +348,35 @@ module.exports = {
     ]);
   },
 
-  submit: async (parentLogger, params) => {
-    parentLogger.info(`Submitting ${JSON.stringify(params, null, 2)}.`);
+  submitStake: (parentLogger, params) => process(parentLogger, {
+    params,
+    method: 'submit',
+    validate: (_, { stake1, stake2 }) => Promise.all([
+      validateStake(stake1),
+      validateStake(stake2),
+    ]),
+    execute: (_, { stake1, stake2, signedMsg1, signedMsg2, matchId, winner, }) =>
+      _contracts.hangman.contract.write.processStakedMatch([
+        stake1,
+        stake2,
+        signedMsg1,
+        signedMsg2,
+        matchId,
+        winner,
+      ]),
+  }),
 
-    const txn = await Txn.create({
-      method: 'submit',
-      status: 'not-started',
-      params,
-    }).fetch();
-
-    const logger = parentLogger.child({ txnId: txn.id, });
-    logger.info(`Submitting txn.`);
-
-    try {
-      await Promise.all([
-        validateStake(params.stake1),
-        validateStake(params.stake2),
-      ]);
-    } catch (error) {
-      logger.error(`Error validating stakes: ${error.message}.`);
-
-      await Txn
-        .updateOne({ id: txn.id })
-        .set({
-          status: 'failure',
-          error: error.message,
-        });
-      txn.status = 'failure';
-      txn.error = error.message;
-
-      return txn; 
-    }
-    
-    const promise = new Promise(promiseHandler(logger, { ...params, txn, }));
-    try {
-      await promise;
-    } catch (error) {
-      logger.error(`Error submitting txn: ${error}.`);
-
-      return txn;
-    }
-
-    logger.info(`Successfully sent transaction.`);
-
-    return txn;
-  },
+  submitPermit: (parentLogger, params) => process(parentLogger, {
+    params,
+    method: 'submitPermit',
+    validate: (_, { permit, signedMsg }) => {
+      // todo: validate permit
+    },
+    execute: (_, { permit: { owner, spender, value, deadline, }, signedMsg }) =>
+      _contracts.usdc.contract.write.permit([
+        owner, spender, value, deadline, signedMsg,
+      ]),
+  }),
 
   withdraw: async (logger, { withdraw, signature }) => {
     logger.info('Starting withdraw.', { withdraw, signature, });

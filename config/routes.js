@@ -8,7 +8,8 @@ module.exports.routes = {
   'GET /v1/txn/:txnId': 'v1/get-txn',
   'GET /v1/txn': 'v1/find-txns',
 
-  'POST /v1/submit': 'v1/submit',
+  'POST /v1/submit/stake': 'v1/submit-stake',
+  'POST /v1/submit/permit': 'v1/submit-permit',
   'POST /v1/withdraw': 'v1/withdraw',
   'POST /v1/check-stake': 'v1/check-stake',
 };
