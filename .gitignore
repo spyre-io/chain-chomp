@@ -1,15 +1,20 @@
-.DS_Store
+
+config/local.js
 node_modules
 
+.DS_Store
 .env*
 !.env.project
 !.env.vault
-
-config/local.js
 .tmp
 
 *~
 *#
+.DS_STORE
+.netbeans
+nbproject
+.idea
+*.iml
 .vscode
 .node_history
 dump.rdb
