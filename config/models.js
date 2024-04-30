@@ -10,7 +10,7 @@ module.exports.models = {
     id: { type: 'number', autoIncrement: true, },
   },
 
-  // overriden by .env
+
   dataEncryptionKeys: {
     default: 'HOOtfAPUZ6g8OoAurmJx1KOzZUfSwVmfzCUilfU9TVQ='
   },

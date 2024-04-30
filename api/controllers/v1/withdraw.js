@@ -25,7 +25,7 @@ module.exports = {
   fn: async function ({ withdraw, signature }) {
     let result;
     try {
-      result = await Web3Service.withdraw({
+      result = await Web3Service.withdraw(this.req.logger, {
         withdraw,
         signature,
       });
@@ -38,7 +38,7 @@ module.exports = {
       };
     }
     
-    Logger.info(result);
+    this.req.logger.info(result);
 
     return { 
       success: true,

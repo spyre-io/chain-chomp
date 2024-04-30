@@ -16,16 +16,8 @@ module.exports = {
   },
 
   fn: async function ({ addr, }) {
-    let withdrawAfter;
-    try {
-      withdrawAfter = await Web3Service.getWithdrawAfter({ addr, });
-    } catch (err) {
-      return {
-        success: false,
-        error: err.message,
-      };
-    }
-
+    let withdrawAfter = await Web3Service.getWithdrawAfter(this.req.logger, { addr, });
+    
     return {
       success: true,
       withdrawAfter: withdrawAfter.toString(),

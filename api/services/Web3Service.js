@@ -1,45 +1,67 @@
-const { Web3 } = require('web3');
-const { BigNumber } = require('ethers');
+const { BigNumber } = require("@ethersproject/bignumber");
+const { createPublicClient, createWalletClient, fallback, http, webSocket, getContract, decodeErrorResult } = require("viem");
+const { privateKeyToAccount } = require("viem/accounts");
 
-// we just want to grab this once
-let _w3;
+let defaultLogger;
+
+// we just want to grab these once
+let _publicClient, _walletClient, _account;
 
 // [name]: { addr, contract: web3.eth.Contract, }
 const _contracts = {};
 
-const getWeb3 = () => {
-  if (!_w3) {
-    Logger.info(`Creating new Web3 instance for '${sails.config.custom.blockchain.rpc}'.`)
-
-    _w3 = new Web3(sails.config.custom.blockchain.rpc);
-    _w3.eth.handleRevert = true
-    
-    // add wallet
-    _w3.eth.accounts.wallet.add(sails.config.custom.blockchain.wallets.owner.pk);
-    _w3.eth.defaultAccount = sails.config.custom.blockchain.wallets.owner.addr;
-
-    Logger.info(`Configured wallet for ${_w3.eth.accounts.wallet[0].address}.`);
-
-    // load contracts
-    for (const [name, { addr, abi, }] of Object.entries(sails.config.custom.blockchain.contracts)) {
-      Logger.info(`Loading contract '${name}' at '${addr}'.`);
-
-      _contracts[name] = {
-        addr,
-        contract: new _w3.eth.Contract(
-          abi,
-          addr,
-          {
-            // todo: poll and update this
-            // gasPrice: '160000000000',
-            from: sails.config.custom.blockchain.wallets.owner.addr,
-          },
-        ),
-      };
-    }
+const initWeb3 = (logger) => {
+  if (_walletClient) {
+    logger.warn('Web3 already initialized.');
+    return;
   }
 
-  return _w3;
+  const ownerAddr = sails.config.custom.blockchain.wallets.owner.addr;
+  const ownerPk = sails.config.custom.blockchain.wallets.owner.pk;
+  const rpcs = sails.config.custom.blockchain.rpcs;
+  const chain = sails.config.custom.blockchain.chain;
+  const contracts = sails.config.custom.blockchain.contracts;
+
+  logger.info(`Configuring wallet for ${ownerAddr}.`);
+
+  _account = privateKeyToAccount(ownerPk);
+
+  logger.info(`Creating new Web3 instance.`)
+
+  _walletClient = createWalletClient({
+    account: _account,
+    chain: chain,
+    transport: fallback([
+      ...rpcs.http.map((url) => http(url)),
+      ...rpcs.ws.map((url) => webSocket(url)),
+    ]),
+  });
+
+  _publicClient = createPublicClient({
+    chain: chain,
+    transport: fallback([
+      ...rpcs.http.map((url) => http(url)),
+      ...rpcs.ws.map((url) => webSocket(url)),
+    ]),
+  })
+
+  // load contracts
+  for (const [name, { addr, abi, }] of Object.entries(contracts)) {
+    logger.info(`Loading contract '${name}' at '${addr}'.`);
+
+    _contracts[name] = {
+      addr,
+      abi,
+      contract: getContract({
+        client: {
+          public: _publicClient,
+          wallet: _walletClient,
+        },
+        address: addr,
+        abi,
+      }),
+    };
+  }
 };
 
 const _txnMutationsById = {
@@ -62,7 +84,7 @@ const processTxnQueue = async (txnId) => {
   try {
     await record.current;
   } catch (error) {
-    Logger.error(`[Web3Service][processTxnQueue] Error processing txn queue: ${error}.`);
+    defaultLogger.error(`Error processing txn queue: ${error}.`, { method: 'processTxnQueue' });
   }
   record.current = null;
 
@@ -83,7 +105,9 @@ const queueTxnMutation = (txnId, fn) => {
   processTxnQueue(txnId);
 };
 
-const getHangmanBalance = async (addr) => await _contracts["hangman"].contract.methods.balances(addr).call();
+const getHangmanBalance = async (addr) => {
+  return await _contracts.hangman.contract.read.balances([addr]);
+};
 
 const validateStake = async ({ user, amount, fee, expiry, }) => {
   // get hangman balance of user
@@ -107,150 +131,195 @@ const validateStake = async ({ user, amount, fee, expiry, }) => {
   }
 };
 
-const promiseHandler = ({ messageFormatter, txn, stake1, stake2, signedMsg1, signedMsg2, matchId, winner }) => (resolve, reject) => {
-  _contracts["hangman"].contract.methods
-    .processStakedMatch(
+const getErrorStringFromViemError = (error) => {
+  const reasons = [];
+  if (error.walk) {
+    error.walk((e) => {
+      // this handles reasons like "revert: Reason string"
+      if (e.data) {
+        try {
+          const result = decodeErrorResult({
+            abi: _contracts.hangman.abi,
+            data: e.data,
+          });
+
+          reasons.push(result.args[0]);
+        } catch (error) {
+          logger.warn(`Error decoding error result: ${error}.`);
+
+          return;
+        }
+      }
+    });
+  } else {
+    reasons.push(error.message);
+  }
+
+  return reasons.join(', ');
+};
+
+const promiseHandler = (logger, { txn, stake1, stake2, signedMsg1, signedMsg2, matchId, winner }) => async (resolve, reject) => {
+  const fail = (message) => {
+    queueTxnMutation(
+      txn.id,
+      async () => {
+        logger.info(`Updating txn status to 'error'.`);
+
+        await Txn
+          .updateOne({ id: txn.id })
+          .set({
+            status: 'failure',
+            error: message,
+          });
+        
+        if (txn.status === 'not-started') {
+          logger.info(`Txn was never sent, so we're rejecting the promise.`);
+
+          reject(message);
+        } else {
+          logger.info(`Txn promise was already handled somewhere else?`);
+        }
+      },
+    );
+  };
+
+  let hash;
+  try {
+    hash = await _contracts.hangman.contract.write.processStakedMatch([
       stake1,
       stake2,
       signedMsg1,
       signedMsg2,
       matchId,
       winner,
-    )
-    .send()
-    .on('sent', (data) => {
-      Logger.info(messageFormatter(`Sent txn: ${data}.`));
+    ]);
+  } catch (error) {
+    fail(getErrorStringFromViemError(error));
+    return;
+  }
 
-      queueTxnMutation(
-        txn.id,
-        async () => {
-          await Txn
-            .updateOne({ id: txn.id })
-            .set({ status: 'sent' });
+  logger = logger.child({ txnHash: hash, });
+  logger.info(`Sent txn. Waiting for confirmation.`);
 
-          txn.status = 'sent';
-          resolve();
-        },
-      );
-    })
-    .on('transactionHash', (txnHash) => {
-      Logger.info(messageFormatter(`Transaction hash: ${txnHash}.`));
+  // queue a mutation and resolve the promise
+  queueTxnMutation(
+    txn.id,
+    async () => {
+      await Txn
+        .updateOne({ id: txn.id })
+        .set({
+          status: 'waiting-for-confirmation',
+          txnHash: hash,
+        });
+      
+      txn.status = 'waiting-for-confirmation';
+      resolve();
+    },
+  );
 
-      queueTxnMutation(
-        txn.id,
-        async () => {
-          await Txn
-            .updateOne({ id: txn.id })
-            .set({
-              status: 'waiting-for-confirmation',
-              txnHash,
-            });
-          
-          txn.status = 'waiting-for-confirmation';
-        },
-      );
-    })
-    .on('receipt', (receipt) => {
-      const { transactionHash, blockHash, contractAddress, } = receipt;
-      const reducedReceipt = { transactionHash, blockHash, contractAddress, };
+  // wait for the transaction to be mined
+  let receipt;
+  try {
+    receipt = await _publicClient.waitForTransactionReceipt({ hash });
+  } catch (error) {
+    fail(getErrorStringFromViemError(error));
+    return;
+  }
 
-      Logger.info(messageFormatter(`Receipt: ${JSON.stringify(reducedReceipt)}.`));
+  logger.info(`Transaction mined.`);
 
-      queueTxnMutation(
-        txn.id,
-        async () => {
-          await Txn
-            .updateOne({ id: txn.id })
-            .set({
-              status: 'success',
-              receipt: reducedReceipt,
-            });
-          
-          txn.status = 'success';
-        },
-      );
-    })
-    .on('error', (error) => {
-      Logger.error(messageFormatter(`ProcessStakedMatch error! Moving from '${txn.status}' -> 'failure': ${error}.`));
-
-      queueTxnMutation(
-        txn.id,
-        async () => {
-          Logger.info(messageFormatter(`Updating txn status to 'error'.`));
-
-          await Txn
-            .updateOne({ id: txn.id })
-            .set({
-              status: 'failure',
-              error: error.message,
-            });
-          
-          if (txn.status === 'not-started') {
-            Logger.info(messageFormatter(`Txn was never sent, so we're rejecting the promise.`));
-
-            reject(error);
-          } else {
-            Logger.info(messageFormatter(`Txn was already handled somewhere else?`));
-          }
-        },
-      );
-    })
-    .catch(() => {
-      // already handled by 'error' handler
-    });
+  const receiptToPlainObject = ({
+    blockHash,
+    blockNumber,
+    contractAddress,
+    effectiveGasPrice,
+    from,
+    gasUsed,
+    status,
+    to,
+    transactionHash,
+    transactionIndex,
+    type,
+  }) => ({
+    contractAddress, from, status, to,
+    transactionHash, transactionIndex, type,
+    blockHash: blockHash.toString(),
+    blockNumber: blockNumber.toString(),
+    effectiveGasPrice: effectiveGasPrice.toString(),
+    gasUsed: gasUsed.toString(),
+  });
+  
+  queueTxnMutation(
+    txn.id,
+    async () => {
+      await Txn
+        .updateOne({ id: txn.id })
+        .set({
+          status: 'success',
+          receipt: receiptToPlainObject(receipt),
+        });
+      
+      txn.status = 'success';
+    },
+  );
 };
 
 module.exports = {
   init: async () => {
-    getWeb3();
+    initWeb3(Logger.default);
 
-    Logger.info(`Web3 initialized.`);
+    defaultLogger = Logger.default.child({ system: 'Web3Service', });
+    defaultLogger.info(`Web3 initialized.`);
   },
 
-  getBalance: async ({ coin, addr, }) => {
-    if ("native" === coin) {
-      const w3 = getWeb3();
+  getBalance: async (logger, { coin, addr, }) => {
+    logger.info(`Getting balance for ${coin} at ${addr}.`);
 
-      return await w3.eth.getBalance(addr);
+    if ("native" === coin) {
+      return await _publicClient.getBalance({ address: addr });
     }
 
     if ("hangman" === coin) {
       return getHangmanBalance(addr);
     }
 
-    return await _contracts[coin].contract.methods.balanceOf(addr).call();
+    return await _contracts[coin].contract.read.balanceOf([addr]);
   },
 
-  getWithdrawAfter: async ({ addr, }) => {
-    return await _contracts["hangman"].contract.methods.withdrawAfter(addr).call();
+  getWithdrawAfter: async (logger, { addr, }) => {
+    logger.info(`Getting withdrawAfter for ${addr}.`);
+
+    return await _contracts.hangman.contract.read.withdrawAfter([addr]);
   },
 
-  getNonce: async ({ addr, }) => {
-    return await _contracts["hangman"].contract.methods.nonces(addr).call();
+  getNonce: async (logger, { addr, }) => {
+    logger.info(`Getting nonce for ${addr}.`);
+
+    return await _contracts.hangman.contract.read.nonces([addr]);
   },
 
-  stakeSignedCheck: async (params) => {
+  stakeSignedCheck: async (logger, params) => {
+    logger.info(`Checking signed stake: ${JSON.stringify(params, null, 2)}.`);
+
     const { stake, sig, } = params;
 
-    const message = (msg) => `[Web3Service][StakeSignedCheck] ${msg}`;
-    Logger.info(message(`Submitting ${JSON.stringify(params, null, 2)}`));
-
-    return await _contracts["hangman"].contract.methods.stakeSignedCheck(
+    return await _contracts.hangman.contract.read.stakeSignedCheck([
       stake,
       sig,
-    ).call();
+    ]);
   },
 
-  submit: async (params) => {
+  submit: async (parentLogger, params) => {
+    parentLogger.info(`Submitting ${JSON.stringify(params, null, 2)}.`);
+
     const txn = await Txn.create({
       method: 'submit',
       status: 'not-started',
       params,
     }).fetch();
 
-    const message = (msg) => `[Web3Service][Submit][Txn.id=${txn.id}] ${msg}`;
-
-    Logger.info(message(`Submitting txn.`));
+    const logger = parentLogger.child({ txnId: txn.id, });
+    logger.info(`Submitting txn.`);
 
     try {
       await Promise.all([
@@ -258,7 +327,7 @@ module.exports = {
         validateStake(params.stake2),
       ]);
     } catch (error) {
-      Logger.error(message(`Error validating stakes: ${error.message}.`));
+      logger.error(`Error validating stakes: ${error.message}.`);
 
       await Txn
         .updateOne({ id: txn.id })
@@ -272,28 +341,26 @@ module.exports = {
       return txn; 
     }
     
-    
-    const promise = new Promise(promiseHandler({ ...params, txn, messageFormatter: message, }));
+    const promise = new Promise(promiseHandler(logger, { ...params, txn, }));
     try {
       await promise;
     } catch (error) {
-      Logger.error(message(`Error submitting txn: ${error}.`));
+      logger.error(`Error submitting txn: ${error}.`);
 
       return txn;
     }
 
-    Logger.info(message(`Successfully sent transaction.`));
+    logger.info(`Successfully sent transaction.`);
 
     return txn;
   },
 
-  withdraw: async ({ withdraw, signature }) => {
-    Logger.info('withdraw', withdraw);
-    Logger.info('signature', signature);
+  withdraw: async (logger, { withdraw, signature }) => {
+    logger.info('Starting withdraw.', { withdraw, signature, });
 
-    return await _contracts["hangman"].contract.methods.withdrawTokenAdmin(
+    return await _contracts.hangman.contract.write.withdrawTokenAdmin([
       withdraw,
       signature,
-    ).send();
+    ]);
   },
 };

@@ -41,7 +41,7 @@ module.exports = {
   fn: async function ({ stake1, stake2, signedMsg1, signedMsg2, matchId, winner, }) {
     let txn;
     try {
-      txn = await Web3Service.submit({
+      txn = await Web3Service.submit(this.req.logger, {
         stake1,
         stake2,
         signedMsg1,

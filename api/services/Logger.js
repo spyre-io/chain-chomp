@@ -2,11 +2,14 @@ const winston = require('winston');
 
 const logger = winston.createLogger({
   level: 'debug',
-  format: winston.format.json(),
+  defaultMeta: {
+    service: 'chomper',
+  },
+  format: process.env.LOCAL === 'true' ? winston.format.cli() : winston.format.json(),
+  transports:[new winston.transports.Console()],
 });
 
-logger.add(new winston.transports.Console({
-  format: winston.format.colorize(),
-}));
-
-module.exports = logger;
+module.exports = {
+  default: logger,
+  child: (meta) => logger.child(meta),
+};

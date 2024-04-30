@@ -22,7 +22,7 @@ module.exports = {
   fn: async function ({ coin, addr, }) {
     let balance;
     try {
-      balance = await Web3Service.getBalance({ coin, addr, });
+      balance = await Web3Service.getBalance(this.req.logger, { coin, addr, });
     } catch (err) {
       return {
         success: false,

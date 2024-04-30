@@ -18,10 +18,8 @@ module.exports = {
   fn: async function ({ addr, }) {
     let nonce;
     try {
-      nonce = await Web3Service.getNonce({ addr, });
+      nonce = await Web3Service.getNonce(this.req.logger, { addr, });
     } catch (error) {
-      Logger.warn('Error getting nonce:', error);
-
       return {
         success: false,
         error: error.message,

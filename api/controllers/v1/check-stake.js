@@ -19,7 +19,7 @@ module.exports = {
   },
 
   fn: async function ({ stake, sig, }) {
-    const addr = await Web3Service.stakeSignedCheck({ stake, sig, });
+    const addr = await Web3Service.stakeSignedCheck(this.req.logger, { stake, sig, });
 
     return { success: true, addr, };
   },
