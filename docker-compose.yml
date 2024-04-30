@@ -3,6 +3,6 @@ services:
   chain-chomp:
     build: ./
     expose:
-      - 80
+      - 10999
     ports:
-      - "80:80"
+      - "10999:10999"
