@@ -1,5 +1,8 @@
 {
-  "addr": "0x8DE63E674fcb47ec596B6320e091A9aA972cf077",
+  "addr": {
+    "base_mainnet": "0x8DE63E674fcb47ec596B6320e091A9aA972cf077",
+    "base_sepolia": "0x733BADC5833d7fC90CD215A2374148d3c7bD1744"
+  },
   "abi": [
     {
       "type": "constructor",

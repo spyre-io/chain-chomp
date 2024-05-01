@@ -18,7 +18,7 @@ const initWeb3 = (logger) => {
 
   const ownerAddr = sails.config.custom.blockchain.wallets.owner.addr;
   const ownerPk = sails.config.custom.blockchain.wallets.owner.pk;
-  const rpcs = sails.config.custom.blockchain.rpcs;
+  const rpcs = sails.config.custom.blockchain.rpcs[process.env.WEB3_CHAIN];
   const chain = sails.config.custom.blockchain.chain;
   const contracts = sails.config.custom.blockchain.contracts;
 
@@ -152,6 +152,10 @@ const getErrorStringFromViemError = (error) => {
         }
       } else if (e.name === 'AbiFunctionNotFoundError') {
         reasons.push(e.message);
+      } else if (e.name === 'ChainMismatchError') {
+        reasons.push(e.message);
+      } else {
+        console.log(e.name, e.message);
       }
     });
   } else {
@@ -260,7 +264,7 @@ const promiseHandler = (logger, { txn, params, fn, }) => async (resolve, reject)
   );
 };
 
-const process = async (parentLogger, { params, method, validate, execute, }) => {
+const processTxn = async (parentLogger, { params, method, validate, execute, }) => {
   parentLogger.info(`Processing '${method}': ${JSON.stringify(params, null, 2)}.`);
 
   const txn = await Txn.create({
@@ -348,7 +352,7 @@ module.exports = {
     ]);
   },
 
-  submitStake: (parentLogger, params) => process(parentLogger, {
+  submitStake: (parentLogger, params) => processTxn(parentLogger, {
     params,
     method: 'submit',
     validate: (_, { stake1, stake2 }) => Promise.all([
@@ -366,7 +370,7 @@ module.exports = {
       ]),
   }),
 
-  submitPermit: (parentLogger, params) => process(parentLogger, {
+  submitPermit: (parentLogger, params) => processTxn(parentLogger, {
     params,
     method: 'submitPermit',
     validate: (_, { permit, signedMsg }) => {
