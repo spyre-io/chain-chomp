@@ -1,2 +1,11 @@
 node_modules
 .tmp
+.vscode
+protocol
+game
+pulumi
+
+.env*
+.flaskenv*
+!.env.project
+!.env.vault
