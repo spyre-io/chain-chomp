@@ -30,4 +30,4 @@ docker run -p 10999:10999 chain-chomp
 
 ## API
 
-Documentation in progress... but until then, check out [`/config/routes.js`](./config/routes.js) for all endpoints.
+Full API documentation, with examples, can be found [here](https://documenter.getpostman.com/view/30699952/2sA3JDiksB).
