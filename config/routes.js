@@ -10,6 +10,7 @@ module.exports.routes = {
 
   'POST /v1/submit/stake': 'v1/submit-stake',
   'POST /v1/submit/permit': 'v1/submit-permit',
+  'POST /v1/submit/deposit': 'v1/submit-deposit',
   'POST /v1/withdraw': 'v1/withdraw',
   'POST /v1/check-stake': 'v1/check-stake',
 };

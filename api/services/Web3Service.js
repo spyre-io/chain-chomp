@@ -382,6 +382,17 @@ module.exports = {
       ]),
   }),
 
+  submitDeposit: (parentLogger, params) => processTxn(parentLogger, {
+    params,
+    method: 'submitDeposit',
+    validate: (_, { deposit, signedMsg }) => {
+      // todo: validate deposit
+    },
+    execute: (_, { deposit, signedMsg }) => _contracts.hangman.contract.write.depositTokenAdmin([
+      deposit, signedMsg,
+    ]),
+  }),
+
   withdraw: async (logger, { withdraw, signature }) => {
     logger.info('Starting withdraw.', { withdraw, signature, });
 
