@@ -27,14 +27,14 @@ or `pnpm`:
 
 ```
 pnpm install
-pnpm run dev
+WEB3_CHAIN=base_sepolia pnpm run dev
 ```
 
 or `docker`:
 
 ```
 docker build -t chain-chomp .
-docker run -p 10999:10999 chain-chomp
+docker run -p 10999:10999 -e WEB3_CHAIN=base_sepolia chain-chomp
 ```
 
 ## API
