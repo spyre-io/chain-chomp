@@ -15,6 +15,8 @@ Chain-chomp is an HTTP server for interacting with Spyre and USDC smart contract
 
 ## Getting Started
 
+First, copy `.env.example` to `.env`.
+
 Run locally using either `docker-compose`:
 
 ```
