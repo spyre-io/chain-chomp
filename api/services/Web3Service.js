@@ -22,7 +22,7 @@ const initWeb3 = (logger) => {
   const chain = sails.config.custom.blockchain.chain;
   const contracts = sails.config.custom.blockchain.contracts;
 
-  logger.info(`Configuring wallet for ${ownerAddr}.`);
+  logger.info(`Configuring wallet for '${process.env.WEB3_CHAIN}'.`);
 
   _account = privateKeyToAccount(ownerPk);
 
