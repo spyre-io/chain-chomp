@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 services:
   postgres:
     command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
@@ -21,7 +21,7 @@ services:
     volumes:
       - data:/var/lib/postgresql/data
       - ./scripts/db/:/docker-entrypoint-initdb.d
-  
+
   chain-chomp:
     build: ./
     depends_on:
@@ -29,7 +29,7 @@ services:
         condition: service_healthy
     environment:
       - LOCAL=true
-      - WEB3_CHAIN=base_sepolia
+      - WEB3_CHAIN=base_mainnet
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localdb
       - POSTGRES_HOST=postgres
